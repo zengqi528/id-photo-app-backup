@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import type { SelectedFile } from '../hooks/useFileSelection';
 import { removeBackground } from '@imgly/background-removal';
 import { refineEdges, smartCrop } from '../utils/imageProcessing';
+import { ClothLayer, type ClothState } from './ClothLayer';
 
 interface EditorProps {
     file: SelectedFile;
@@ -79,6 +80,15 @@ const SizeMenu: React.FC<SizeMenuProps> = ({ onSelectSize, onClose }) => {
     );
 };
 
+const CLOTHES = [
+    { id: 'boys_suit', name: '男童西装', src: '/assets/clothes/boys_suit.png' },
+    { id: 'mens_suit', name: '男士西装', src: '/assets/clothes/mens_suit.png' },
+    { id: 'womens_shirt', name: '女士衬衫', src: '/assets/clothes/womens_shirt.png' },
+    { id: 'womens_vneck', name: '女士V领', src: '/assets/clothes/womens_vneck.png' },
+    { id: 'girls_navy', name: '女童海军', src: '/assets/clothes/girls_navy.png' },
+    { id: 'girls_pastel', name: '女童粉色', src: '/assets/clothes/girls_pastel.png' },
+];
+
 const Editor: React.FC<EditorProps> = ({ file, onBack }) => {
     const [isProcessing, setIsProcessing] = useState(false);
 
@@ -87,8 +97,13 @@ const Editor: React.FC<EditorProps> = ({ file, onBack }) => {
     const [displaySrc, setDisplaySrc] = useState<string>(file.previewUrl);
     const [backgroundColor, setBackgroundColor] = useState<string>('transparent');
 
+    // Clothing State
+    const [activeClothSrc, setActiveClothSrc] = useState<string | null>(null);
+    const [clothState, setClothState] = useState<ClothState | null>(null);
+    const [containerDimensions, setContainerDimensions] = useState<{ width: number, height: number } | null>(null);
+
     // UI State
-    const [activeTool, setActiveTool] = useState<'none' | 'color'>('none');
+    const [activeTool, setActiveTool] = useState<'none' | 'color' | 'clothes'>('none');
     const [showSizeMenu, setShowSizeMenu] = useState(false);
 
     // Helpers
@@ -159,18 +174,55 @@ const Editor: React.FC<EditorProps> = ({ file, onBack }) => {
             canvas.height = img.height;
             const ctx = canvas.getContext('2d');
             if (ctx) {
+                // 1. Fill Background
                 if (backgroundColor !== 'transparent') {
                     ctx.fillStyle = backgroundColor;
                     ctx.fillRect(0, 0, canvas.width, canvas.height);
                 }
+
+                // 2. Draw Person
                 ctx.drawImage(img, 0, 0);
 
-                const link = document.createElement('a');
-                link.download = `id-photo-${Date.now()}.png`;
-                link.href = canvas.toDataURL('image/png');
-                link.click();
+                // 3. Draw Cloth (if active)
+                if (activeClothSrc && clothState && containerDimensions) {
+                    const ratio = img.width / containerDimensions.width;
+                    const clothImg = new Image();
+                    clothImg.crossOrigin = 'anonymous';
+                    clothImg.src = activeClothSrc;
+
+                    clothImg.onload = () => {
+                        ctx.save();
+                        // Transformation center point in Canvas coordinates
+                        const cx = (clothState.x + clothState.width / 2) * ratio;
+                        const cy = (clothState.y + clothState.height / 2) * ratio;
+
+                        ctx.translate(cx, cy);
+                        ctx.rotate(clothState.rotation * Math.PI / 180);
+                        ctx.translate(-cx, -cy);
+
+                        ctx.drawImage(
+                            clothImg,
+                            clothState.x * ratio,
+                            clothState.y * ratio,
+                            clothState.width * ratio,
+                            clothState.height * ratio
+                        );
+                        ctx.restore();
+                        triggerDownload(canvas);
+                    };
+                    clothImg.onerror = () => triggerDownload(canvas);
+                } else {
+                    triggerDownload(canvas);
+                }
             }
         };
+    };
+
+    const triggerDownload = (canvas: HTMLCanvasElement) => {
+        const link = document.createElement('a');
+        link.download = `id-photo-${Date.now()}.png`;
+        link.href = canvas.toDataURL('image/png');
+        link.click();
     };
 
     return (
@@ -194,6 +246,16 @@ const Editor: React.FC<EditorProps> = ({ file, onBack }) => {
             <div className="flex-1 bg-[#1a1a1a] relative overflow-hidden flex items-center justify-center p-8 pb-32">
                 {/* Image Container */}
                 <div className="relative shadow-2xl transition-all duration-300 ease-out"
+                    ref={(el) => {
+                        if (el) {
+                            const { clientWidth, clientHeight } = el;
+                            if (!containerDimensions ||
+                                Math.abs(containerDimensions.width - clientWidth) > 1 ||
+                                Math.abs(containerDimensions.height - clientHeight) > 1) {
+                                setContainerDimensions({ width: clientWidth, height: clientHeight });
+                            }
+                        }
+                    }}
                     style={{
                         maxHeight: '65vh',
                         maxWidth: '90vw'
@@ -201,7 +263,7 @@ const Editor: React.FC<EditorProps> = ({ file, onBack }) => {
                 >
                     {/* Background Layer */}
                     <div
-                        className="absolute inset-0 transition-colors duration-300"
+                        className="absolute inset-0 transition-colors duration-300 pointer-events-none"
                         style={{ backgroundColor: backgroundColor === 'transparent' ? 'transparent' : backgroundColor }}
                     />
 
@@ -219,8 +281,20 @@ const Editor: React.FC<EditorProps> = ({ file, onBack }) => {
                     <img
                         src={displaySrc}
                         alt="Preview"
-                        className="relative z-10 block w-auto h-auto max-h-[65vh] object-contain transition-all"
+                        className="relative z-10 block w-auto h-auto max-h-[65vh] object-contain transition-all pointer-events-none"
                     />
+
+                    {/* Clothing Layer (Overlay) */}
+                    {activeClothSrc && containerDimensions && (
+                        <div className="absolute inset-0 z-30">
+                            <ClothLayer
+                                src={activeClothSrc}
+                                containerWidth={containerDimensions.width}
+                                containerHeight={containerDimensions.height}
+                                onChange={setClothState}
+                            />
+                        </div>
+                    )}
 
                     {/* Loading Overlay */}
                     {isProcessing && (
@@ -263,6 +337,41 @@ const Editor: React.FC<EditorProps> = ({ file, onBack }) => {
                     </div>
                 )}
 
+                {/* Secondary Panel: Clothing Selection */}
+                {activeTool === 'clothes' && (
+                    <div className="px-6 py-4 animate-in slide-in-from-bottom-5 fade-in border-b border-gray-100">
+                        <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-hide">
+                            <button
+                                className={`flex flex-col items-center gap-2 min-w-[60px] ${!activeClothSrc ? 'opacity-100' : 'opacity-50'}`}
+                                onClick={() => setActiveClothSrc(null)}
+                            >
+                                <div className="w-14 h-14 rounded-xl border border-dashed border-gray-300 flex items-center justify-center bg-gray-50">
+                                    <span className="text-xs text-gray-400">无</span>
+                                </div>
+                                <span className="text-[10px] text-gray-500">不穿</span>
+                            </button>
+
+                            {CLOTHES.map((cloth) => (
+                                <button
+                                    key={cloth.id}
+                                    className="flex flex-col items-center gap-2 min-w-[60px] group"
+                                    onClick={() => setActiveClothSrc(cloth.src)}
+                                >
+                                    <div className={`w-14 h-14 rounded-xl border overflow-hidden bg-gray-100 transition-all ${activeClothSrc === cloth.src ? 'ring-2 ring-blue-500 ring-offset-2 border-blue-500' : 'border-gray-200 group-hover:border-blue-300'}`}>
+                                        <img src={cloth.src} className="w-full h-full object-contain" alt={cloth.name} />
+                                    </div>
+                                    <span className={`text-[10px] ${activeClothSrc === cloth.src ? 'text-blue-600 font-bold' : 'text-gray-500'}`}>
+                                        {cloth.name}
+                                    </span>
+                                </button>
+                            ))}
+                        </div>
+                        <div className="mt-2 text-center">
+                            <p className="text-[10px] text-gray-400">💡 拖拽调整位置，双指缩放大小</p>
+                        </div>
+                    </div>
+                )}
+
                 {/* Primary Toolbar Icons */}
                 <div className="flex justify-around items-center px-2 py-4 pb-8">
 
@@ -275,6 +384,20 @@ const Editor: React.FC<EditorProps> = ({ file, onBack }) => {
                             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" /></svg>
                         </div>
                         <span className={`text-[10px] font-bold ${activeTool === 'color' ? 'text-blue-600' : 'text-gray-500'}`}>换底色</span>
+                    </button>
+
+                    {/* Tool 2: Clothes (NEW) */}
+                    <button
+                        onClick={() => {
+                            setActiveTool(activeTool === 'clothes' ? 'none' : 'clothes');
+                            if (!refinedBlob) ensureProcessed();
+                        }}
+                        className="flex flex-col items-center gap-1 w-16 group"
+                    >
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${activeTool === 'clothes' ? 'bg-blue-600 text-white' : 'text-gray-600 bg-gray-100 group-hover:bg-gray-200'}`}>
+                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
+                        </div>
+                        <span className={`text-[10px] font-bold ${activeTool === 'clothes' ? 'text-blue-600' : 'text-gray-500'}`}>换正装</span>
                     </button>
 
                     {/* Tool 2: Size */}

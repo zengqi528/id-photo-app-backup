@@ -1,5 +1,6 @@
 
 import { useState, useEffect } from 'react'
+import Editor from './components/Editor'
 import Header from './components/Header'
 import HeroAction from './components/HeroAction'
 import SelectionGrid from './components/SelectionGrid'
@@ -10,12 +11,8 @@ import type { IDType } from './data/mockData'
 function App() {
   const { selectedFile, handleFileSelect, clearSelection } = useFileSelection();
   const {
-    isProcessing,
-    displaySrc,
-    displayState,
-    processBackground,
+
     processCrop,
-    reset
   } = useImageProcessor(selectedFile?.previewUrl || null);
 
   const [backgroundColor, setBackgroundColor] = useState<string>('transparent');
@@ -30,10 +27,7 @@ function App() {
 
 
   // Handlers
-  const handleColorClick = async (color: string) => {
-    await processBackground();
-    setBackgroundColor(color);
-  };
+
 
   const handleSizeSelect = async (item: IDType) => {
     // If no file selected, maybe prompt upload? 
@@ -51,30 +45,7 @@ function App() {
     }
   };
 
-  const handleSave = () => {
-    if (!displaySrc) return;
-    const canvas = document.createElement('canvas');
-    const img = new Image();
-    img.src = displaySrc;
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        if (backgroundColor !== 'transparent') {
-          ctx.fillStyle = backgroundColor;
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
-        ctx.drawImage(img, 0, 0);
 
-        const link = document.createElement('a');
-        link.download = `id-photo-${Date.now()}.png`;
-        link.href = canvas.toDataURL('image/png');
-        link.click();
-      }
-    };
-  };
 
   return (
     <div className="min-h-screen bg-background max-w-md mx-auto shadow-2xl overflow-hidden relative font-sans flex flex-col">
@@ -103,70 +74,10 @@ function App() {
             </div>
           </>
         ) : (
-          <div className="px-6 py-4 flex flex-col items-center animate-in fade-in slide-in-from-bottom-5">
-            {/* Re-implementing the "Canvas" feel but inline */}
-            <div className="relative shadow-xl rounded-lg overflow-hidden border-4 border-white ring-1 ring-gray-100 max-h-[50vh] transition-all">
-              {/* BG Layer */}
-              <div
-                className="absolute inset-0 transition-colors duration-300"
-                style={{ backgroundColor: backgroundColor }}
-              />
-
-              {/* Image Layer */}
-              <img
-                src={displaySrc || selectedFile.previewUrl}
-                alt="Preview"
-                className="relative z-10 block w-auto h-auto max-h-[50vh] object-contain"
-              />
-
-              {/* Loading Overlay */}
-              {isProcessing && (
-                <div className="absolute inset-0 bg-white/50 backdrop-blur-sm z-20 flex flex-col items-center justify-center">
-                  <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mb-2"></div>
-                </div>
-              )}
-            </div>
-
-            {/* Inline Toolbar for Color */}
-            <div className="mt-6 w-full overflow-x-auto pb-2 scrollbar-hide">
-              <div className="flex justify-center gap-4">
-                {[
-                  { color: '#3b82f6', name: '蓝底' },
-                  { color: '#ffffff', name: '白底', border: true },
-                  { color: '#ef4444', name: '红底' },
-                  { color: '#60a5fa', name: '浅蓝' },
-                  { color: 'transparent', name: '透明', icon: true }
-                ].map((c) => (
-                  <div className="flex flex-col items-center gap-1 min-w-[3rem]" key={c.name}>
-                    <div
-                      className={`w-10 h-10 rounded-full cursor-pointer transition-all active:scale-95 shadow-sm relative flex items-center justify-center ${backgroundColor === c.color ? 'ring-2 ring-offset-2 ring-blue-500 scale-110' : ''} ${c.border ? 'border border-gray-200' : ''}`}
-                      style={{ backgroundColor: c.color === 'transparent' ? undefined : c.color }}
-                      onClick={() => handleColorClick(c.color)}
-                    >
-                      {c.color === 'transparent' && (
-                        <div className="w-full h-full rounded-full bg-[repeating-conic-gradient(#e5e7eb_0%_25%,#fff_0%_50%)] bg-[length:6px_6px]" />
-                      )}
-                    </div>
-                    <span className="text-[10px] text-gray-500">{c.name}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Action Bar */}
-            <div className="flex gap-4 mt-4 w-full">
-              <button onClick={clearSelection} className="flex-1 py-2.5 bg-gray-100 text-gray-600 text-sm font-bold rounded-xl active:scale-95 transition-transform">
-                重新上传
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={isProcessing}
-                className="flex-1 py-2.5 bg-blue-600 text-white text-sm font-bold rounded-xl shadow-lg shadow-blue-200 active:scale-95 transition-transform disabled:opacity-50"
-              >
-                保存照片
-              </button>
-            </div>
-          </div>
+          <Editor
+            file={selectedFile}
+            onBack={clearSelection}
+          />
         )}
 
         {/* Divider if needed */}
