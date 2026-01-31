@@ -3,6 +3,7 @@ import type { SelectedFile } from '../hooks/useFileSelection';
 import { removeBackground } from '@imgly/background-removal';
 import { refineEdges, smartCrop } from '../utils/imageProcessing';
 import { ClothLayer, type ClothState } from './ClothLayer';
+import { getCachedClothing, cacheClothing, hasCachedClothing } from '../utils/clothingCache';
 
 interface EditorProps {
     file: SelectedFile;
@@ -81,6 +82,8 @@ const SizeMenu: React.FC<SizeMenuProps> = ({ onSelectSize, onClose }) => {
 };
 
 const CLOTHES = [
+    { id: 'mens_suit_auto', name: '智能男西装', src: '/assets/clothes/mens_suit_auto.png' },
+    { id: 'womens_blouse_auto', name: '智能女衬衫', src: '/assets/clothes/womens_blouse_auto.png' },
     { id: 'boys_suit', name: '男童西装', src: '/assets/clothes/boys_suit.png' },
     { id: 'mens_suit', name: '男士西装', src: '/assets/clothes/mens_suit.png' },
     { id: 'womens_shirt', name: '女士衬衫', src: '/assets/clothes/womens_shirt.png' },
@@ -101,6 +104,8 @@ const Editor: React.FC<EditorProps> = ({ file, onBack }) => {
     const [activeClothSrc, setActiveClothSrc] = useState<string | null>(null);
     const [clothState, setClothState] = useState<ClothState | null>(null);
     const [containerDimensions, setContainerDimensions] = useState<{ width: number, height: number } | null>(null);
+    const [activeClothId, setActiveClothId] = useState<string | null>(null);
+    const [isProcessingCloth, setIsProcessingCloth] = useState(false);
 
     // UI State
     const [activeTool, setActiveTool] = useState<'none' | 'color' | 'clothes'>('none');
@@ -144,6 +149,47 @@ const Editor: React.FC<EditorProps> = ({ file, onBack }) => {
 
         setBackgroundColor(color);
     };
+
+    const handleClothSelect = async (cloth: typeof CLOTHES[0]) => {
+        if (activeClothId === cloth.id) return;
+
+        setActiveClothId(cloth.id);
+
+        // 1. Check Cache
+        if (hasCachedClothing(cloth.id)) {
+            setActiveClothSrc(getCachedClothing(cloth.id)!);
+            return;
+        }
+
+        // 2. Process
+        setIsProcessingCloth(true);
+        try {
+            console.log("Processing cloth:", cloth.name);
+
+            // Fix: Fetch as blob first to avoid Worker path/CORS issues with relative assets
+            const response = await fetch(cloth.src);
+            const originalBlob = await response.blob();
+
+            const config: any = {
+                model: 'isnet',
+                output: { quality: 1.0, format: 'image/png' },
+            };
+            const blob = await removeBackground(originalBlob, config);
+            const url = URL.createObjectURL(blob);
+
+            cacheClothing(cloth.id, url);
+            setActiveClothSrc(url);
+        } catch (err) {
+            console.error("Failed to process cloth", err);
+            alert("正装处理失败，请重试");
+            setActiveClothId(null);
+            setActiveClothSrc(null);
+        } finally {
+            setIsProcessingCloth(false);
+        }
+    };
+
+
 
     const handleSmartCrop = async (width: number, height: number) => {
         setShowSizeMenu(false); // Close menu
@@ -208,6 +254,28 @@ const Editor: React.FC<EditorProps> = ({ file, onBack }) => {
                             clothState.height * ratio
                         );
                         ctx.restore();
+
+                        // 4. Draw Head Overlay (Top 45% again) to cover mannequin neck
+                        // We use destination-atop or just drawImage with clipping?
+                        // Simple way: Draw the original IMG again, but clipped to top area.
+                        if (true) {
+                            ctx.save();
+                            ctx.beginPath();
+                            // Clip visible area: Top 0% to 45% of height
+                            ctx.rect(0, 0, canvas.width, canvas.height * 0.45);
+                            ctx.clip();
+
+                            // Draw person again on top
+                            ctx.drawImage(img, 0, 0);
+
+                            // Optional: Soft Edge? Canvas gradient mask is hard. 
+                            // For MVP, hard cut at chest line usually works if suit is V-neck.
+                            // But for linear gradient fade, we need a temp canvas.
+                            // Let's stick to simple rect for now, or just trust the visual trick.
+                            // Actually, let's use a soft mask approach if possible.
+                            ctx.restore();
+                        }
+
                         triggerDownload(canvas);
                     };
                     clothImg.onerror = () => triggerDownload(canvas);
@@ -286,7 +354,7 @@ const Editor: React.FC<EditorProps> = ({ file, onBack }) => {
 
                     {/* Clothing Layer (Overlay) */}
                     {activeClothSrc && containerDimensions && (
-                        <div className="absolute inset-0 z-30">
+                        <div className="absolute inset-0 z-30 animate-in fade-in zoom-in-95 duration-300">
                             <ClothLayer
                                 src={activeClothSrc}
                                 containerWidth={containerDimensions.width}
@@ -296,10 +364,30 @@ const Editor: React.FC<EditorProps> = ({ file, onBack }) => {
                         </div>
                     )}
 
-                    {/* Loading Overlay */}
-                    {isProcessing && (
-                        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-20 flex flex-col items-center justify-center animate-in fade-in">
+                    {/* Clever Trick: Head Overlay (Top 35% of person) 
+                        Puts the real chin/neck ON TOP of the mannequin neck/collar.
+                        Only active when clothes are worn.
+                    */}
+                    {activeClothSrc && displaySrc && (
+                        <img
+                            src={displaySrc}
+                            alt="Head Overlay"
+                            className="absolute inset-0 z-30 block w-auto h-auto max-h-[65vh] object-contain pointer-events-none"
+                            style={{
+                                // Fade out from 30% down to 45% (neck area)
+                                maskImage: 'linear-gradient(to bottom, black 0%, black 25%, transparent 45%)',
+                                WebkitMaskImage: 'linear-gradient(to bottom, black 0%, black 25%, transparent 45%)'
+                            }}
+                        />
+                    )}
+
+                    {/* Loading Overlay (Global or Cloth specific) */}
+                    {(isProcessing || isProcessingCloth) && (
+                        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-40 flex flex-col items-center justify-center animate-in fade-in">
                             <div className="w-10 h-10 border-4 border-white/30 border-t-white rounded-full animate-spin mb-3"></div>
+                            <div className="text-white text-xs font-medium tracking-wide">
+                                {isProcessingCloth ? "正在制作正装..." : "正在处理照片..."}
+                            </div>
                         </div>
                     )}
                 </div>
@@ -355,12 +443,13 @@ const Editor: React.FC<EditorProps> = ({ file, onBack }) => {
                                 <button
                                     key={cloth.id}
                                     className="flex flex-col items-center gap-2 min-w-[60px] group"
-                                    onClick={() => setActiveClothSrc(cloth.src)}
+                                    onClick={() => handleClothSelect(cloth)}
+                                    disabled={isProcessingCloth}
                                 >
-                                    <div className={`w-14 h-14 rounded-xl border overflow-hidden bg-gray-100 transition-all ${activeClothSrc === cloth.src ? 'ring-2 ring-blue-500 ring-offset-2 border-blue-500' : 'border-gray-200 group-hover:border-blue-300'}`}>
+                                    <div className={`w-14 h-14 rounded-xl border overflow-hidden bg-gray-100 transition-all ${activeClothId === cloth.id ? 'ring-2 ring-blue-500 ring-offset-2 border-blue-500' : 'border-gray-200 group-hover:border-blue-300'}`}>
                                         <img src={cloth.src} className="w-full h-full object-contain" alt={cloth.name} />
                                     </div>
-                                    <span className={`text-[10px] ${activeClothSrc === cloth.src ? 'text-blue-600 font-bold' : 'text-gray-500'}`}>
+                                    <span className={`text-[10px] ${activeClothId === cloth.id ? 'text-blue-600 font-bold' : 'text-gray-500'}`}>
                                         {cloth.name}
                                     </span>
                                 </button>

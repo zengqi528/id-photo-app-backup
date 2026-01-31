@@ -37,11 +37,18 @@ export const ClothLayer: React.FC<ClothLayerProps> = ({
 
     // Reset when src changes
     useEffect(() => {
+        // Smart Auto-Fit Logic
+        // Assumption: Shoulders are roughly 80-90% of the ID photo width
+        // Position: Shoulders start around 45-55% down the image
+        const initialWidth = containerWidth * 0.85;
+
         setClothState((prev) => ({
             ...prev,
             src,
-            x: (containerWidth - 200) / 2, // Center horizontally
-            y: containerHeight / 2, // Start somewhat lower for "body" placement
+            x: (containerWidth - initialWidth) / 2, // Center horizontally
+            y: containerHeight * 0.45, // Place at ~45% height (shoulder line)
+            width: initialWidth,
+            height: initialWidth, // Will adjust by aspect ratio later
             rotation: 0
         }));
     }, [src, containerWidth, containerHeight]);
@@ -61,7 +68,7 @@ export const ClothLayer: React.FC<ClothLayerProps> = ({
     };
 
     return (
-        <div className="absolute inset-0 pointer-events-none overflow-hidden"
+        <div className="absolute inset-0 overflow-hidden"
             style={{ width: containerWidth, height: containerHeight }}>
             <img
                 ref={targetRef}
